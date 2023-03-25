@@ -94,7 +94,6 @@ int main(int argc, char ** argv) {
         auto lparams = llama_context_default_params();
 
         lparams.n_ctx      = params.n_ctx;
-        lparams.n_parts    = params.n_parts;
         lparams.seed       = params.seed;
         lparams.f16_kv     = params.memory_f16;
         lparams.use_mlock  = params.use_mlock;
@@ -426,7 +425,7 @@ int main(int argc, char ** argv) {
         }
 
         // end of text token
-        if (embd.back() == llama_token_eos()) {
+        if (!embd.empty() && embd.back() == llama_token_eos()) {
             if (params.instruct) {
                 is_interacting = true;
             } else {

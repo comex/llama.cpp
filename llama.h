@@ -21,7 +21,11 @@
 
 #define LLAMA_FILE_VERSION 1
 #define LLAMA_FILE_MAGIC 0x67676a74 // 'ggjt' in hex
-#define LLAMA_FILE_MAGIC_UNVERSIONED 0x67676d6c // pre-versioned files
+
+// History of GGML file (magic, version) pairs:
+// - ('ggml', no version): Original format
+// - ('ggmh', 1):          Added version field and scores
+// - ('ggjt', 1):          Current version; added alignment
 
 #ifdef __cplusplus
 extern "C" {
@@ -49,7 +53,7 @@ extern "C" {
 
     struct llama_context_params {
         int n_ctx;   // text context
-        int n_parts; // -1 for default
+        int n_parts; // no longer used!
         int seed;    // RNG seed, 0 for random
 
         bool f16_kv;     // use fp16 for KV cache

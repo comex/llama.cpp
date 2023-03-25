@@ -37,14 +37,6 @@
     } while (0)
 
 
-// determine number of model parts based on the dimension
-static const std::unordered_map<int, int> LLAMA_N_PARTS = {
-    { 4096, 1 },
-    { 5120, 2 },
-    { 6656, 4 },
-    { 8192, 8 },
-};
-
 // available llama models
 enum e_model {
     MODEL_UNKNOWN,
@@ -353,8 +345,8 @@ static bool report_bad_magic(const char *path, uint32_t got, uint32_t want) {
             "\tyou most likely need to regenerate your ggml files\n"
             "\tthe benefit is you'll get 10-100x faster load times\n"
             "\tsee https://github.com/ggerganov/llama.cpp/issues/91\n"
-            "\tuse convert-pth-to-ggml.py to regenerate from original pth\n"
-            "\tuse migrate-ggml-2023-03-30-pr613.py if you deleted originals\n",
+            "\tuse convert.py to either regenerate from original pth\n"
+            "\tor update existing GGML file\n",
             path, got, want);
     return false;
 }
@@ -363,7 +355,6 @@ static bool llama_model_load(
         const std::string & fname,
         llama_context & lctx,
         int n_ctx,
-        int n_parts,
         ggml_type memory_type,
         bool vocab_only,
         llama_progress_callback progress_callback,
@@ -392,11 +383,6 @@ static bool llama_model_load(
     {
         uint32_t magic;
         fin.read((char *) &magic, sizeof(magic));
-        if (magic == LLAMA_FILE_MAGIC_UNVERSIONED) {
-            fprintf(stderr, "%s: invalid model file '%s' (too old, regenerate your model files or convert them with convert-unversioned-ggml-to-ggml.py!)\n",
-                    __func__, fname.c_str());
-            return false;
-        }
         if (magic != LLAMA_FILE_MAGIC) {
             return report_bad_magic(fname.c_str(), magic, LLAMA_FILE_MAGIC);
         }
@@ -430,16 +416,6 @@ static bool llama_model_load(
 
         n_ff = ((2*(4*hparams.n_embd)/3 + hparams.n_mult - 1)/hparams.n_mult)*hparams.n_mult;
 
-        if (n_parts < 1) {
-            n_parts = LLAMA_N_PARTS.at(hparams.n_embd);
-        }
-
-        // temp warning to tell the user to use "--n_parts"
-        if (hparams.f16 == 4 && n_parts != 1) {
-            fprintf(stderr, "%s: GPTQ model detected - are you sure n_parts should be %d? we normally expect it to be 1\n", __func__, n_parts);
-            fprintf(stderr, "%s: use '--n_parts 1' if necessary\n", __func__);
-        }
-
         if (hparams.n_layer == 32) {
             model.type = e_model::MODEL_7B;
         }
@@ -465,7 +441,6 @@ static bool llama_model_load(
         fprintf(stderr, "%s: n_rot   = %d\n", __func__, hparams.n_rot);
         fprintf(stderr, "%s: f16     = %d\n", __func__, hparams.f16);
         fprintf(stderr, "%s: n_ff    = %d\n", __func__, n_ff);
-        fprintf(stderr, "%s: n_parts = %d\n", __func__, n_parts);
         fprintf(stderr, "%s: type    = %d\n", __func__, model.type);
     }
 
@@ -1307,11 +1282,6 @@ static bool llama_model_quantize_internal(const std::string & fname_inp, const s
     {
         uint32_t magic;
         finp.read((char *) &magic, sizeof(magic));
-        if (magic == LLAMA_FILE_MAGIC_UNVERSIONED) {
-            fprintf(stderr, "%s: invalid model file '%s' (too old, regenerate your model files!)\n",
-                    __func__, fname_inp.c_str());
-            return false;
-        }
         if (magic != LLAMA_FILE_MAGIC) {
             return report_bad_magic(fname_inp.c_str(), magic, LLAMA_FILE_MAGIC);
         }
@@ -1586,7 +1556,7 @@ struct llama_context * llama_init_from_file(
 
     ggml_type memory_type = params.f16_kv ? GGML_TYPE_F16 : GGML_TYPE_F32;
 
-    if (!llama_model_load(path_model, *ctx, params.n_ctx, params.n_parts, memory_type,
+    if (!llama_model_load(path_model, *ctx, params.n_ctx, memory_type,
                           params.vocab_only, params.progress_callback,
                           params.progress_callback_user_data)) {
         fprintf(stderr, "%s: failed to load model\n", __func__);
