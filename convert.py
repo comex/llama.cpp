@@ -1,11 +1,28 @@
-from sentencepiece import SentencePieceProcessor  # type: ignore
-import json, struct, re, zipfile, pickle, itertools, sys, enum, concurrent.futures
-import argparse, math, io, functools, mmap, signal, faulthandler, copy
-from pathlib import Path
-import numpy as np
+import argparse
+import concurrent.futures
+import copy
+import enum
+import faulthandler
+import functools
+import io
+import itertools
+import json
+import math
+import mmap
+import pickle
+import re
+import signal
+import struct
+import sys
+import zipfile
+from abc import ABCMeta, abstractmethod
 from dataclasses import dataclass
-from typing import Optional, Callable, Any, Iterable, IO, Sequence, Union, TypeVar, Literal
-from abc import abstractmethod, ABCMeta
+from pathlib import Path
+from typing import (IO, Any, Callable, Iterable, Literal, Optional, Sequence,
+                    TypeVar, Union)
+
+import numpy as np
+from sentencepiece import SentencePieceProcessor  # type: ignore
 
 faulthandler.register(signal.SIGUSR1)
 
