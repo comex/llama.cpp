@@ -250,7 +250,7 @@ class UnquantizedTensor(Tensor):
     def permute(self, n_head: int) -> 'UnquantizedTensor':
         return UnquantizedTensor(permute(self.ndarray, n_head))
 
-def load_unquantized(lazy_tensor: 'LazyTensor', expected_dtype: Any = None) -> NDArray:
+def load_unquantized(lazy_tensor: 'LazyTensor', expected_dtype: Any = None, fp16: bool = False) -> NDArray:
     tensor = lazy_tensor.load()
     assert isinstance(tensor, UnquantizedTensor)
 
@@ -258,6 +258,8 @@ def load_unquantized(lazy_tensor: 'LazyTensor', expected_dtype: Any = None) -> N
     actual_shape = list(tensor.ndarray.shape)
     assert actual_shape == lazy_tensor.shape, (actual_shape, lazy_tensor.shape)
     if expected_dtype is not None:
+        if fp16 and tensor.ndarray.dtype == np.float16 and expected_dtype == np.float32:
+            tensor.ndarray = np.array(tensor.ndarray,dtype = np.float32)
         assert tensor.ndarray.dtype == expected_dtype, (tensor.ndarray.dtype, expected_dtype)
 
     return tensor.ndarray
@@ -313,8 +315,7 @@ class DeferredPermutedTensor(Tensor):
 class GPTQForLLaMaQuantizedTensor(Tensor):
     def __init__(self, model: 'LazyModel', namebase: str) -> None:
         qweight = load_unquantized(model[f"{namebase}.qweight"], np.int32)
-        scales = load_unquantized(model[f"{namebase}.scales"], np.float16)
-        scales = np.array(scales,dtype = np.float32)
+        scales = load_unquantized(model[f"{namebase}.scales"], np.float32, fp16 = True)
 
         bias = model.get(f"{namebase}.bias")
         if bias is not None:
@@ -327,7 +328,8 @@ class GPTQForLLaMaQuantizedTensor(Tensor):
             qzeros = load_unquantized(model[f"{namebase}.qzeros"], np.int32)
             assert qzeros.dtype == np.int32
             zeros = dequantize_q4(qzeros, scales, scales, g_idx=None)
-            zeros = np.array(zeros,dtype = np.float32)
+            if zeros.dtype == np.float16:
+                zeros = np.array(zeros,dtype = np.float32)
             assert zeros.dtype == np.float32
 
         assert zeros.shape == scales.shape
@@ -345,12 +347,17 @@ class GPTQForLLaMaQuantizedTensor(Tensor):
         self.qweight = qweight
         self.scales = scales
         self.addends = -zeros
-        self.g_idx = None
+        self.g_idx: Optional[NDArray]
+        if f"{namebase}.g_idx" in model:
+            self.g_idx = load_unquantized(model[f"{namebase}.g_idx"], np.int32)
+            assert self.g_idx.shape == (qweight.shape[1] * 8,)
+        else:
+            self.g_idx = None
 
 
         self.shape = [self.qweight.shape[0], self.qweight.shape[1] * 8]
         self.data_type = QuantizedDataType(groupsize=self.groupsize(), have_addends=True,
-                                           have_g_idx=False)
+                                           have_g_idx=(self.g_idx is not None))
 
     def inspect(self, row: int, col: int) -> None:
         '''For debugging.'''
@@ -565,7 +572,7 @@ def handle_quantization(model: LazyModel) -> LazyModel:
             scales_width = 1 if lazy_scales.shape[1] == 1 else lazy_scales.shape[0]
             assert real_shape[1] % scales_width == 0
             groupsize = real_shape[1] // scales_width
-            have_g_idx = False# f"{namebase}.g_idx" in model
+            have_g_idx = f"{namebase}.g_idx" in model
             data_type = QuantizedDataType(groupsize=groupsize, have_addends=True, have_g_idx=have_g_idx)
 
             def load() -> Tensor:
@@ -887,7 +894,21 @@ def pick_output_type(model: LazyModel, output_type_str: Optional[str]) -> GGMLFi
     name_to_type = {name: lazy_tensor.data_type for (name, lazy_tensor) in model.items()}
     raise Exception(f"Unexpected combination of types: {name_to_type}")
 
-def do_necessary_conversions(model: LazyModel) -> LazyModel:
+def conversions_del_g_idx(model: LazyModel, act_order: bool) -> LazyModel:
+    if not(act_order):
+        del_list = set([])
+        for name in model:
+            g_idx_name = f"{name.rsplit('.', 1)[0]}.g_idx"
+            if g_idx_name in model:
+                del_list.add(g_idx_name)
+                
+        for g_idx_name in del_list:
+            del model[g_idx_name]
+    
+    return model
+    
+def do_necessary_conversions(model: LazyModel, act_order: bool) -> LazyModel:
+    model = conversions_del_g_idx(model, act_order)
     model = handle_quantization(model)
 
     if "lm_head.weight" in model:
@@ -1014,6 +1035,7 @@ def main(args_in: Optional[list[str]] = None) -> None:
     parser.add_argument("--vocab-dir", type=Path, help="directory containing tokenizer.model, if separate from model file")
     parser.add_argument("--outfile", type=Path, help="path to write to; default: based on input")
     parser.add_argument("model", type=Path, help="directory containing model file, or model file itself (*.pth, *.pt, *.bin)")
+    parser.add_argument("--act-order", action="store_true", help="If the GPTQ model uses act-order, activate it.")
     args = parser.parse_args(args_in)
 
     vocab: Vocab
@@ -1037,7 +1059,7 @@ def main(args_in: Optional[list[str]] = None) -> None:
             vocab_dir = args.vocab_dir if args.vocab_dir else model_plus.paths[0].parent
             vocab = load_vocab(vocab_dir)
         model = model_plus.model
-        model = do_necessary_conversions(model)
+        model = do_necessary_conversions(model, args.act_order)
         output_type = pick_output_type(model, args.outtype)
         model = convert_to_output_type(model, output_type)
         params = Params.guessed(model, output_type)
