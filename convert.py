@@ -313,7 +313,8 @@ class DeferredPermutedTensor(Tensor):
 class GPTQForLLaMaQuantizedTensor(Tensor):
     def __init__(self, model: 'LazyModel', namebase: str) -> None:
         qweight = load_unquantized(model[f"{namebase}.qweight"], np.int32)
-        scales = load_unquantized(model[f"{namebase}.scales"], np.float32)
+        scales = load_unquantized(model[f"{namebase}.scales"], np.float16)
+        scales = np.array(scales,dtype = np.float32)
 
         bias = model.get(f"{namebase}.bias")
         if bias is not None:
@@ -326,6 +327,7 @@ class GPTQForLLaMaQuantizedTensor(Tensor):
             qzeros = load_unquantized(model[f"{namebase}.qzeros"], np.int32)
             assert qzeros.dtype == np.int32
             zeros = dequantize_q4(qzeros, scales, scales, g_idx=None)
+            zeros = np.array(zeros,dtype = np.float32)
             assert zeros.dtype == np.float32
 
         assert zeros.shape == scales.shape
@@ -343,18 +345,12 @@ class GPTQForLLaMaQuantizedTensor(Tensor):
         self.qweight = qweight
         self.scales = scales
         self.addends = -zeros
-
-        self.g_idx: Optional[NDArray]
-        if f"{namebase}.g_idx" in model:
-            self.g_idx = load_unquantized(model[f"{namebase}.g_idx"], np.int32)
-            assert self.g_idx.shape == (qweight.shape[1] * 8,)
-        else:
-            self.g_idx = None
+        self.g_idx = None
 
 
         self.shape = [self.qweight.shape[0], self.qweight.shape[1] * 8]
         self.data_type = QuantizedDataType(groupsize=self.groupsize(), have_addends=True,
-                                           have_g_idx=(self.g_idx is not None))
+                                           have_g_idx=False)
 
     def inspect(self, row: int, col: int) -> None:
         '''For debugging.'''
@@ -569,7 +565,7 @@ def handle_quantization(model: LazyModel) -> LazyModel:
             scales_width = 1 if lazy_scales.shape[1] == 1 else lazy_scales.shape[0]
             assert real_shape[1] % scales_width == 0
             groupsize = real_shape[1] // scales_width
-            have_g_idx = f"{namebase}.g_idx" in model
+            have_g_idx = False# f"{namebase}.g_idx" in model
             data_type = QuantizedDataType(groupsize=groupsize, have_addends=True, have_g_idx=have_g_idx)
 
             def load() -> Tensor:
