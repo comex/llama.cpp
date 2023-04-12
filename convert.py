@@ -26,8 +26,8 @@ class QuantizedDataType:
     have_addends: bool
     have_g_idx: bool
 
-DT_Q4_0 = QuantizedDataType(groupsize=32, have_addends=False, have_g_idx=False)
-DT_Q4_1 = QuantizedDataType(groupsize=32, have_addends=True, have_g_idx=False)
+DT_Q4_0 = QuantizedDataType(groupsize=128, have_addends=False, have_g_idx=False)
+DT_Q4_1 = QuantizedDataType(groupsize=128, have_addends=True, have_g_idx=False)
 
 DataType = Union[UnquantizedDataType, QuantizedDataType]
 
@@ -271,7 +271,7 @@ class GGMLQuantizedTensor(Tensor):
         assert data_type in (DT_Q4_1, DT_Q4_0) # for now
         assert isinstance(data_type, QuantizedDataType) # redundant, but mypy complains without this
         assert columns % data_type.groupsize == 0
-        words_in_block = 6 if data_type == DT_Q4_1 else 5
+        words_in_block = 18 if data_type == DT_Q4_1 else 15
         self.ndarray = ndarray.view(dtype=np.uint32).reshape((rows, columns // data_type.groupsize, words_in_block))
         self.shape = shape[:]
         self.data_type = data_type
@@ -412,8 +412,8 @@ class GPTQForLLaMaQuantizedTensor(Tensor):
         #     - addend (float32, 4 bytes)
         #     - scale (float32, 4 bytes)
         #     - weights (int4 * 32, 16 bytes)
-
-        if self.groupsize() != 32:
+        print(self.addends.shape)
+        if self.groupsize() != 128:
             raise Exception("should have been regrouped before converting to ggml")
 
 
@@ -422,9 +422,9 @@ class GPTQForLLaMaQuantizedTensor(Tensor):
         # concatenate them.
         addends_view = self.addends.view(dtype=np.int32)[:, :, np.newaxis]
         scales_view = self.scales.view(dtype=np.int32)[:, :, np.newaxis]
-
+        print(self.qweight.shape)
         # Split into groups of 4 columns (i.e. 32 columns of quantized data):
-        grouped = self.qweight.reshape([self.qweight.shape[0], self.qweight.shape[1] // 4, 4])
+        grouped = self.qweight.reshape([self.qweight.shape[0], self.qweight.shape[1] // 16, 16])
 
         # And concatenate:
         grouped = np.concatenate([scales_view, addends_view, grouped], axis=2, casting='no')
