@@ -1,6 +1,8 @@
 # Compatibility stub
 
-import argparse, convert
+import argparse
+
+import convert
 
 parser = argparse.ArgumentParser(description='Convert a LLaMA model checkpoint to a ggml compatible file')
 parser.add_argument('dir_model',  help='directory containing the model checkpoint')
